@@ -1,0 +1,82 @@
+# Copyright 2016 Yanis Guenane <yanis+ansible@guenane.org>
+# Author: Yanis Guenane <yanis+guenane@guenane.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+- name: Incluse OS-specific variables
+  include_vars: '{{ ansible_os_family }}.yml'
+
+
+- name: Install the PostgreSQL server package
+  package:
+    name: '{{ postgresql_package_name }}'
+
+
+- name: Install the PostgreSQL extra packages
+  package:
+    name: '{{ item }}'
+  with_items: '{{ postgresql_extra_packages }}'
+
+
+- name: Initialize the database
+  shell: /usr/local/etc/rc.d/postgresql initdb
+  args:
+    creates: '{{ postgresql_data_folder }}'
+
+
+- name: Include local PostgreSQL configuration
+  lineinfile:
+    dest: '{{ postgresql_data_folder }}/postgresql.conf'
+    line: "include_if_exists = 'postgresql.conf.local'"
+
+
+- name: Write specific settings on postgresql.conf.local
+  lineinfile:
+    dest: '{{ postgresql_data_folder }}/postgresql.conf.local'
+    regexp: '^{{ item.key }} = '
+    line: '{{ item.key }} = {{ item.value }}'
+    create: yes
+  with_dict: '{{ postgresql_settings | default({}) }}'
+  notify: restart postgresql
+
+
+- name: Start the PostgreSQL server service
+  service:
+    name: '{{ postgresql_service_name }}'
+    state: started
+    enabled: yes
+
+
+- name: Include platform specific tasks
+  include: '{{ ansible_os_family }}.yml'
+
+
+- name: Ensure specified databases are created
+  postgresql_db:
+    name: '{{ item.key }}'
+    encoding: '{{ item.encoding | default("UTF-8") }}'
+    state: '{{ item.value.state | default("present") }}'
+    login_user: '{{ item.login_user | default(postgresql_admin_role_name) }}'
+  with_dict: '{{ postgresql_databases | default({}) }}'
+
+
+- name: Ensure specified users are created
+  postgresql_user:
+    name: '{{ item.key }}'
+    db: '{{ item.value.db }}'
+    password: '{{ item.value.password }}'
+    priv: '{{ item.value.priv }}'
+    state: '{{ item.value.state | default("present") }}'
+    login_user: '{{ item.login_user | default(postgresql_admin_role_name) }}'
+  with_dict: '{{ postgresql_users | default({}) }}'
